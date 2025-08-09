@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>학급 자리 배치 프로그램 (새 UI)</title>
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React + Babel (원본과 동일) -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- dom-to-image (원본과 동일) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image/2.6.0/dom-to-image.min.js"></script>
+</head>
+<body class="min-h-screen bg-slate-50 text-gray-900 py-8">
+  <div id="root" class="px-4"></div>
+
+  <script type="text/babel">
+    const { useState } = React;
+
+    function SeatPlanner() {
+      // ===== 상태 (원본 유지) =====
+      const [studentNames, setStudentNames] = useState('');
+      const [layoutType, setLayoutType] = useState('single'); // 시험형/짝궁형/모둠형
+      const [setting, setSetting] = useState('2');            // 열 수 또는 모둠 수
+      const [teams, setTeams] = useState({});                 // 모둠 사전 배치
+      const [fixedSeats, setFixedSeats] = useState({});       // 고정 좌석
+      const [result, setResult] = useState([]);               // 레이아웃 결과(2차원 배열 또는 팀 배열)
+
+      // ===== 유틸 (원본 유지) =====
+      const parseStudents = () => studentNames.split(',').map(s => s.trim()).filter(Boolean);
+      const shuffle = arr => [...arr].sort(() => Math.random() - 0.5);
+
+      const generateSingleLayout = (students, cols) => {
+        const layout = [];
+        for (let i = 0; i < students.length; i += cols) {
+          layout.push(new Array(cols).fill(''));
+        }
+        return layout;
+      };
+
+      const generateDoubleLayout = (students, pairCols) => {
+        const cols = pairCols * 2;
+        const rows = Math.ceil(students.length / 2 / pairCols);
+        return Array.from({ length: rows }, () => new Array(cols).fill(''));
+      };
+
+      const generateTeamLayout = (students, teamCount, teamAssignments) => {
+        const assigned = new Set();
+        const t = Array.from({ length: teamCount }, () => []);
+        for (let i = 0; i < teamCount; i++) {
+          const members = (teamAssignments[i] || []).filter(name => students.includes(name) && !assigned.has(name));
+          members.forEach(name => { t[i].push(name); assigned.add(name); });
+        }
+        const unassigned = shuffle(students.filter(s => !assigned.has(s)));
+        unassigned.forEach((s, i) => t[i % teamCount].push(s));
+        return t;
+      };
+
+      const handleGenerate = () => {
+        const students = shuffle(parseStudents());
+        const settingInt = parseInt(setting);
+        let layout = [];
+        if (layoutType === 'single') layout = generateSingleLayout(students, settingInt);
+        else if (layoutType === 'double') layout = generateDoubleLayout(students, settingInt);
+        else if (layoutType === 'team') layout = generateTeamLayout(students, settingInt, teams);
+        setResult(layout);
+      };
+
+      const handleSeatNameChange = (row, col, value) => {
+        const key = `${row}-${col}`;
+        setFixedSeats(prev => ({ ...prev, [key]: value }));
+      };
+
+      const handleAutoAssign = () => {
+        const allStudents = parseStudents();
+        const assigned = new Set(Object.values(fixedSeats).filter(Boolean));
+        const remaining = shuffle(allStudents.filter(s => !assigned.has(s)));
+        const newResult = result.map((row, i) =>
+          row.map((cell, j) => {
+            const key = `${i}-${j}`;
+            return fixedSeats[key] || (remaining.length > 0 ? remaining.shift() : '');
+          })
+        );
+        setResult(newResult);
+      };
+
+      const handleExport = () => {
+        const printArea = document.getElementById('preview-area');
+        if (!printArea) return;
+        const printWindow = window.open('', '', 'width=800,height=600');
+        printWindow.document.write(`<html><head><title>자리표 출력</title></head><body>`);
+        printWindow.document.write(printArea.innerHTML);
+        printWindow.document.write('</body></html>');
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
+        printWindow.close();
+      };
+
+      const handleImageDownload = () => {
+        const node = document.getElementById('preview-area');
+        if (!node) return;
+        domtoimage.toPng(node)
+          .then(dataUrl => {
+            const link = document.createElement('a');
+            link.download = '자리배치.png';
+            link.href = dataUrl;
+            link.click();
+          })
+          .catch(error => console.error('이미지 저장 실패:', error));
+      };
+
+      // ===== 렌더: 좌석 레이아웃 (원본 로직 유지, UI만 변경) =====
+      const renderLayout = () =>
+        result.map((row, i) => (
+          <div key={i} className="flex justify-center gap-2 mb-2">
+            {row.map((seat, j) => {
+              const key = `${i}-${j}`;
+              const isGap =
+                (layoutType === 'single' && j !== row.length - 1) ||
+                (layoutType === 'double' && j % 2 === 1 && j !== row.length - 1);
+              return (
+                <div
+                  key={j}
+                  className={`w-28 h-12 flex items-center justify-center rounded-xl shadow text-center border
+                              ${fixedSeats[key] ? 'bg-yellow-100 font-bold border-amber-300' : 'bg-white border-slate-200'}
+                              ${isGap ? 'mr-6' : ''}`}
+                >
+                  {seat}
+                </div>
+              );
+            })}
+          </div>
+        ));
+
+      // ===== UI 시작: 빙고판 톤으로 리스킨 =====
+      return (
+        <div className="max-w-6xl mx-auto space-y-6">
+          {/* 헤더 카드 */}
+          <div className="bg-amber-100 rounded-2xl shadow p-6 relative">
+            <h1 className="text-3xl font-extrabold text-center text-gray-900 tracking-tight mb-3">학급 자리 배치 프로그램</h1>
+            <p className="text-center text-gray-700">- 시험형 / 짝궁형 / 모둠형 자리 배치 -</p>
+            <div className="absolute right-4 top-4">
+              <span className="bg-amber-400 text-white font-black px-3 py-1 rounded-xl shadow">SEAT</span>
+            </div>
+          </div>
+
+          {/* 상단 작업 버튼 */}
+          <div className="flex justify-end gap-2">
+            <button onClick={handleExport} className="px-4 py-2 bg-indigo-700 text-white rounded-lg font-semibold shadow hover:bg-indigo-800">
+              PDF 출력
+            </button>
+            <button onClick={handleImageDownload} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold shadow hover:bg-emerald-700">
+              이미지 저장
+            </button>
+          </div>
+
+          {/* 학생 입력 섹션 */}
+          <div className="rounded-xl shadow overflow-hidden border-4 border-emerald-400">
+            <div className="px-4 py-2 bg-emerald-600 text-white font-bold">학생 이름</div>
+            <div className="p-3 bg-white">
+              <textarea
+                value={studentNames}
+                onChange={e => setStudentNames(e.target.value)}
+                rows={4}
+                className="w-full border rounded-md px-3 py-2 outline-none"
+                placeholder="예: 홍길동, 김철수, 이영희 ..."
+              ></textarea>
+              <p className="text-sm text-slate-500 mt-2">쉼표(,)로 구분해서 입력하세요.</p>
+            </div>
+          </div>
+
+          {/* 배치 옵션 섹션 */}
+          <div className="rounded-xl shadow overflow-hidden border-4 border-orange-300">
+            <div className="px-4 py-2 bg-orange-500 text-white font-bold">배치 옵션</div>
+            <div className="p-3 bg-white grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+              <div className="md:col-span-4 flex items-center gap-2">
+                <span className="font-semibold">형식</span>
+                <select
+                  value={layoutType}
+                  onChange={e => { setLayoutType(e.target.value); setResult([]); setFixedSeats({}); }}
+                  className="border rounded-md px-3 py-2"
+                >
+                  <option value="single">시험형</option>
+                  <option value="double">짝궁형</option>
+                  <option value="team">모둠형</option>
+                </select>
+              </div>
+
+              <div className="md:col-span-4 flex items-center gap-2">
+                <span className="font-semibold">{layoutType === 'team' ? '모둠 수' : '열 수'}</span>
+                <input
+                  type="number"
+                  value={setting}
+                  onChange={e => setSetting(e.target.value)}
+                  className="border rounded-md px-3 py-2 w-24"
+                />
+              </div>
+
+              <div className="md:col-span-4 flex justify-end">
+                <button
+                  onClick={handleGenerate}
+                  className="w-full md:w-auto px-4 py-2 bg-indigo-700 text-white rounded-lg font-semibold shadow hover:bg-indigo-800"
+                >
+                  자리배치도 만들기
+                </button>
+              </div>
+            </div>
+
+            {/* 모둠 사전 배치 입력 (팀일 때만) */}
+            {layoutType === 'team' && (
+              <div className="p-3 bg-white space-y-2">
+                {[...Array(parseInt(setting || 0))].map((_, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <span className="w-20 font-semibold">모둠 {i + 1}</span>
+                    <input
+                      placeholder="이름, 이름"
+                      className="border rounded-md px-3 py-2 flex-1"
+                      onChange={e => {
+                        const newTeams = { ...teams };
+                        newTeams[i] = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+                        setTeams(newTeams);
+                      }}
+                    />
+                  </div>
+                ))}
+                <p className="text-sm text-slate-500">입력한 학생이 우선 해당 모둠에 배치됩니다. 남은 학생은 자동으로 균등 배치됩니다.</p>
+              </div>
+            )}
+          </div>
+
+          {/* 고정 좌석 지정 (시험/짝궁형만) */}
+          {(layoutType === 'single' || layoutType === 'double') && result.length > 0 && (
+            <div className="rounded-xl shadow overflow-hidden border-4 border-amber-300">
+              <div className="px-4 py-2 bg-amber-400 text-white font-bold">고정 좌석 지정</div>
+              <div className="p-3 bg-white space-y-2">
+                {result.map((row, i) => (
+                  <div key={i} className="flex justify-center gap-2">
+                    {row.map((_, j) => {
+                      const key = `${i}-${j}`;
+                      const isGap =
+                        (layoutType === 'single' && j !== row.length - 1) ||
+                        (layoutType === 'double' && j % 2 === 1 && j !== row.length - 1);
+                      return (
+                        <input
+                          key={key}
+                          placeholder="이름"
+                          value={fixedSeats[key] || ''}
+                          onChange={e => handleSeatNameChange(i, j, e.target.value)}
+                          className={`border p-2 text-center w-28 rounded-md
+                                      ${fixedSeats[key] ? 'bg-yellow-100 font-semibold border-amber-300' : 'border-slate-300'}
+                                      ${isGap ? 'mr-6' : ''}`}
+                        />
+                      );
+                    })}
+                  </div>
+                ))}
+                <div className="flex justify-end">
+                  <button onClick={handleAutoAssign} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold shadow hover:bg-emerald-700">
+                    자리 배치
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 미리보기 */}
+          {(layoutType === 'single' || layoutType === 'double') && result.length > 0 && (
+            <div className="rounded-2xl shadow overflow-hidden border-4 border-purple-400" id="preview-area">
+              <div className="px-4 py-2 bg-purple-600 text-white font-bold">자리배치 미리보기</div>
+              <div className="p-4 bg-white">
+                {renderLayout()}
+              </div>
+            </div>
+          )}
+
+          {/* 모둠형 미리보기 (간단 카드형) */}
+          {layoutType === 'team' && result.length > 0 && (
+            <div className="rounded-2xl shadow overflow-hidden border-4 border-purple-400" id="preview-area">
+              <div className="px-4 py-2 bg-purple-600 text-white font-bold">모둠 배치 미리보기</div>
+              <div className="p-4 bg-white grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {result.map((team, idx) => (
+                  <div key={idx} className="border rounded-xl shadow-sm p-4">
+                    <div className="font-extrabold mb-2 text-indigo-700">모둠 {idx + 1}</div>
+                    {team.length ? (
+                      <ul className="list-disc pl-5 space-y-1">
+                        {team.map((name, i) => <li key={i}>{name}</li>)}
+                      </ul>
+                    ) : (
+                      <div className="text-slate-500">(배정 없음)</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="text-right text-gray-600">제작 : 조철연</div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<SeatPlanner />);
+  </script>
+</body>
+</html>
